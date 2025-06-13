@@ -1,10 +1,10 @@
-from data_processor import read_excel_data
 from report_generator import generate_docx_report, get_organization_info
-from visuals import create_trend_chart, create_network_traffic_chart, get_analysis_period
+from visuals import create_trend_chart, create_network_traffic_chart, get_analysis_period, create_data_distribution_chart
 from config import OPENAI_API_KEY, LLM_MODEL
 import openai
 import re
 import os
+import pandas as pd
 
 
 def build_combined_prompt(all_data: dict):
@@ -41,19 +41,19 @@ Analysis of network protocols reveals... [Write detailed paragraphs about most t
 Just Type - "Indicators are given below".
 
 5. Top IP Addresses
-The most active attacking IP addresses demonstrate... [Give ONLY a table for the top 20 IP addresses with respect to severity of attacks(should include highest to lowest severity). In the table also include severity and action of each value]
+The most active attacking IP addresses demonstrate... [Give ONLY a table for the top 20 IP addresses with respect to threatLevel of attacks(from highest to lowest. Must include all levels). In the table also include a column named severity which shows the threat level and action of each value]
 
 6. Credential Patterns
-Attack credential patterns reveal... [Identify username/password patterns, common combinations, brute force attempts. Create a table for top 6 most comomon usernames that have been attacked along with the protocol service they have been attacked on and then create a table for top 6 passwords that have been attacked along with the protocol service they have been attacked on]
+Attack credential patterns reveal... [Identify username/password patterns, common combinations, brute force attempts. Create a table for top 6 most common usernames that have been attacked along with the protocol service they have been attacked on and then some info and then create a table for top 6 passwords that have been attacked along with the protocol service they have been attacked on and then some info]
 
 7. Subdomains
-Subdomain enumeration and targeting shows... [Give a table for the top 20 subdomains and the number of attacks they have been involved in]
+Subdomain enumeration and targeting shows... [Give ONLY a table for the top 20 subdomains that are different from each other]
 
 8. Email Addresses
-Email-related attack vectors include... [Give a table for the top 20 email addresses and the number of attacks they have been involved in]
+Email-related attack vectors include... [Give ONLY a table for the 20 email addresses that are different from each other]
 
 9. Hashes
-Malware hash analysis indicates... [Give a table for the top 5 hashes and the number of attacks they have been involved in]
+Malware hash analysis indicates... [Give ONLY a table for the top 5 hashes and the malware family they belong to]
 
 IMPORTANT: Write substantial content under each numbered section. Do not just list the headers. Analyze the actual data provided above.
 """
@@ -250,9 +250,22 @@ def parse_report_sections(report_text):
     return sections, section_tables
 
 
+def read_all_excels_in_folder(folder_path):
+    all_data = {}
+    for filename in os.listdir(folder_path):
+        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            file_path = os.path.join(folder_path, filename)
+            # Read the first (and only) sheet
+            df = pd.read_excel(file_path)
+            # Use filename (without extension) as the key
+            sheet_name = os.path.splitext(filename)[0]
+            all_data[sheet_name] = df
+    return all_data
+
+
 def main():
-    print("📥 Loading honeypot data from all sheets...")
-    all_data = read_excel_data("data/Honeypot_Dummy_Data.xlsx")
+    print("📥 Loading honeypot data from all Excel files in data folder...")
+    all_data = read_all_excels_in_folder("data")
     
     # Create output directory if it doesn't exist
     os.makedirs("output", exist_ok=True)
@@ -266,6 +279,10 @@ def main():
     images = {}
     network_charts = {}
     
+    # Create data distribution chart first
+    distribution_chart_path = "output/data_distribution_chart.png"
+    create_data_distribution_chart(all_data, distribution_chart_path)
+    
     for sheet_name, df in all_data.items():
         # Check if the dataframe has the required columns for trend chart
         required_cols = ['reported_at', 'count', 'indicator_ip']
@@ -273,16 +290,20 @@ def main():
             chart_path = f"output/{sheet_name}_trend_chart.png"
             create_trend_chart(df, chart_path)
             images[sheet_name] = chart_path
+            print(f"✅ Created trend chart for {sheet_name}")
         else:
             images[sheet_name] = None
+            print(f"⚠️ Skipping trend chart for {sheet_name} - missing columns. Has: {list(df.columns)}")
         
         # Check if the dataframe has the required column for network traffic chart
         if 'Attacked_Port' in df.columns:
             network_chart_path = f"output/{sheet_name}_network_traffic_chart.png"
             create_network_traffic_chart(df, network_chart_path)
             network_charts[sheet_name] = network_chart_path
+            print(f"✅ Created network traffic chart for {sheet_name}")
         else:
             network_charts[sheet_name] = None
+            print(f"⚠️ Skipping network traffic chart for {sheet_name} - no 'Attacked_Port' column")
     
     print("🧠 Generating AI analysis...")
     prompt = build_combined_prompt(all_data)
@@ -310,15 +331,27 @@ def main():
     
     # Assign images to specific sections
     for section_name in content_sections.keys():
-        if "Honeypot Attack Trends" in section_name:
+        if "Attack Indicators" in section_name:
+            section_images[section_name] = distribution_chart_path
+            print(f"Assigned data distribution chart to section: {section_name}")
+        elif "Honeypot Attack Trends" in section_name:
             section_images[section_name] = trend_chart_path
+            print(f"Assigned trend chart to section: {section_name}")
         elif "Network Traffic by Protocol" in section_name:
             section_images[section_name] = network_chart_path
+            print(f"Assigned network chart to section: {section_name}")
         elif "Attack Trends" in section_name:
             section_images[section_name] = trend_chart_path
+            print(f"Assigned trend chart to section: {section_name}")
         else:
             section_images[section_name] = None
+            print(f"No chart assigned to section: {section_name}")
     
+    # Debug prints for chart paths
+    print(f"Data distribution chart path: {distribution_chart_path}")
+    print(f"Trend chart path: {trend_chart_path}")
+    print(f"Network chart path: {network_chart_path}")
+
     # Get organization info from logos folder
     print("🏢 Detecting organization info from logos folder...")
     org_name, org_logo_path = get_organization_info("logos")

@@ -68,32 +68,34 @@ def create_trend_chart(df, output_path: str):
     # Convert to numeric values only
     df['count'] = pd.to_numeric(df['count'], errors='coerce')
 
-    # Filter data 
-    start_april = pd.to_datetime('2025-04-01')
-    end_april = pd.to_datetime('2025-04-30')
-    df_april = df[(df['reported_at'] >= start_april) & (df['reported_at'] <= end_april)]
+    # Get the date range from the data
+    start_date = df['reported_at'].min()
+    end_date = df['reported_at'].max()
 
-    # If no data in April 2025, return without creating chart
-    if df_april.empty:
+    # If no valid dates, return without creating chart
+    if pd.isna(start_date) or pd.isna(end_date):
+        print(f"⚠️ No valid dates found in data for trend chart")
         return
 
-    # Define weekly date ranges
-    week_ranges = {
-        'Week 1': (pd.to_datetime('2025-04-01'), pd.to_datetime('2025-04-06')),
-        'Week 2': (pd.to_datetime('2025-04-07'), pd.to_datetime('2025-04-13')),
-        'Week 3': (pd.to_datetime('2025-04-14'), pd.to_datetime('2025-04-20')),
-        'Week 4': (pd.to_datetime('2025-04-21'), pd.to_datetime('2025-04-27')),
-        'Week 5': (pd.to_datetime('2025-04-28'), pd.to_datetime('2025-04-30'))
-    }
+    # Create weekly date ranges
+    date_ranges = []
+    current_date = start_date
+    week_num = 1
+    
+    while current_date <= end_date:
+        week_end = min(current_date + pd.Timedelta(days=6), end_date)
+        date_ranges.append((f'Week {week_num}', (current_date, week_end)))
+        current_date = week_end + pd.Timedelta(days=1)
+        week_num += 1
 
     # Lists to store data for plotting
     weeks = []
     unique_ips = []
     total_hits = []
 
-    for week_label, (start_date, end_date) in week_ranges.items():
+    for week_label, (week_start, week_end) in date_ranges:
         # Filter data for the current week
-        df_current_week = df_april[(df_april['reported_at'] >= start_date) & (df_april['reported_at'] <= end_date)]
+        df_current_week = df[(df['reported_at'] >= week_start) & (df['reported_at'] <= week_end)]
 
         # Calculate unique IPs
         weeks.append(week_label)
@@ -112,16 +114,28 @@ def create_trend_chart(df, output_path: str):
     # Create the figure and a set of subplots
     fig, ax1 = plt.subplots(figsize=(12, 7))
 
-    # Plot Unique IP Count as a bar chart on the left y-axis
-    sns.barplot(x='Week', y='Unique IP Count', data=plot_df, ax=ax1, color='darkblue', label='Unique IP Count')
+    # Remove the rectangle/box outline
+    for spine in ax1.spines.values():
+        spine.set_visible(False)
+
+    # Add horizontal grid lines
+    ax1.yaxis.grid(True, linestyle='--', linewidth=0.7, color='#cccccc', alpha=0.7)
+    ax1.set_axisbelow(True)
+
+    # Plot Unique IP Count as a thin, sleek bar chart on the left y-axis
+    bar_width = 0.4
+    bar_positions = range(len(plot_df['Week']))
+    ax1.bar(bar_positions, plot_df['Unique IP Count'], width=bar_width, color='darkblue', label='Unique IP Count', zorder=3)
+    ax1.set_xticks(bar_positions)
+    ax1.set_xticklabels(plot_df['Week'], rotation=45, ha='right')
     ax1.set_xlabel('Weeks')
     ax1.set_ylabel('Unique IP Count', color='darkblue')
     ax1.tick_params(axis='y', labelcolor='darkblue')
     ax1.set_title('Attack Trends')
 
-    # Create a second y-axis for Total Hit Count (line chart)
+    # Create a second y-axis for Total Hit Count (thicker line chart)
     ax2 = ax1.twinx()
-    sns.lineplot(x='Week', y='Total Hit Count', data=plot_df, ax=ax2, color='red', marker='o', label='Total Hit Count')
+    ax2.plot(bar_positions, plot_df['Total Hit Count'], color='red', marker='o', label='Total Hit Count', linewidth=3, zorder=4)
     ax2.set_ylabel('Total Hit Count', color='red')
     ax2.tick_params(axis='y', labelcolor='red')
 
@@ -130,7 +144,6 @@ def create_trend_chart(df, output_path: str):
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax2.legend(lines + lines2, labels + labels2, loc='upper right')
 
-    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     
     # Save the chart instead of showing it
@@ -151,60 +164,222 @@ def create_network_traffic_chart(df, output_path: str):
     
     # Check if 'Attacked_Port' column exists
     if 'Attacked_Port' not in df.columns:
+        print(f"⚠️ 'Attacked_Port' column not found in data for network traffic chart")
         return
+    
+    # Common port to protocol mapping
+    port_protocol_mapping = {
+        21: 'FTP', 22: 'SSH', 23: 'TELNET', 25: 'SMTP', 53: 'DNS', 80: 'HTTP',
+        110: 'POP3', 143: 'IMAP', 443: 'HTTPS', 993: 'IMAPS', 995: 'POP3S',
+        135: 'RPC', 139: 'NetBIOS', 445: 'SMB', 3389: 'RDP', 1433: 'MSSQL',
+        3306: 'MySQL', 5432: 'PostgreSQL', 6379: 'Redis', 27017: 'MongoDB',
+        1521: 'Oracle', 161: 'SNMP', 162: 'SNMPTRAP', 69: 'TFTP', 123: 'NTP',
+        389: 'LDAP', 636: 'LDAPS', 514: 'Syslog', 515: 'LPR', 587: 'SMTP-TLS',
+        465: 'SMTPS', 990: 'FTPS', 992: 'TelnetS', 8080: 'HTTP-Alt',
+        8443: 'HTTPS-Alt', 5060: 'SIP', 5061: 'SIPS', 1723: 'PPTP',
+        1194: 'OpenVPN', 500: 'IPSec', 4500: 'IPSec-NAT', 1812: 'RADIUS',
+        1813: 'RADIUS-Acct', 119: 'NNTP', 563: 'NNTPS', 993: 'IMAPS',
+        220: 'IMAP3', 179: 'BGP', 520: 'RIP', 521: 'RIPng', 2049: 'NFS',
+        111: 'Portmapper', 2000: 'Cisco-SCCP', 1701: 'L2TP', 1702: 'L2F',
+        47: 'GRE', 1863: 'MSNP', 5222: 'XMPP', 5269: 'XMPP-Server',
+        6667: 'IRC', 194: 'IRC', 6697: 'IRC-SSL', 5900: 'VNC', 5901: 'VNC',
+        5902: 'VNC', 5903: 'VNC', 631: 'IPP', 9100: 'JetDirect',
+        10000: 'Webmin', 8000: 'HTTP-Alt2', 8888: 'HTTP-Alt3', 9999: 'Abyss',
+        7001: 'Cassandra', 9042: 'Cassandra', 9160: 'Cassandra',
+        11211: 'Memcached', 50070: 'Hadoop', 9200: 'Elasticsearch',
+        5984: 'CouchDB', 6379: 'Redis', 27017: 'MongoDB', 28017: 'MongoDB-Web'
+    }
     
     # Replace 'NA' strings with actual NaN values for proper handling
     df['Attacked_Port'] = df['Attacked_Port'].replace('NA', pd.NA)
 
     # Drop rows where 'Attacked_Port' is NaN before splitting
-    # This ensures we only process valid port strings
     df_cleaned_ports = df.dropna(subset=['Attacked_Port'])
-    
-    # Check if we have any data left
     if df_cleaned_ports.empty:
+        print(f"⚠️ No valid port data found for network traffic chart")
         return
 
     # Split the 'Attacked_Port' strings by '&&' and explode the list to new rows
-    # Then strip any whitespace from the resulting port numbers
     all_individual_ports = df_cleaned_ports['Attacked_Port'].str.split('&&').explode().str.strip()
-
-    # Convert ports to numeric, coercing errors to NaN. This will also handle empty strings if any
-    # And then drop any NaN values that result from conversion errors (e.g., if a split results in an empty string)
     all_individual_ports = pd.to_numeric(all_individual_ports, errors='coerce').dropna()
-
-    # Check if we have any valid ports
     if all_individual_ports.empty:
+        print(f"⚠️ No valid numeric ports found for network traffic chart")
         return
-
-    # Convert the ports to integer type for consistency
     all_individual_ports = all_individual_ports.astype(int)
 
-    # Count the occurrences of each unique port
     port_counts = all_individual_ports.value_counts()
-
-    # Define the number of top ports to display
     num_top_ports = 10
-
-    # Get the top N major ports
     major_ports = port_counts.head(num_top_ports)
-
-    # Calculate the sum of the remaining (other) ports
     other_ports_count = port_counts.iloc[num_top_ports:].sum()
 
-    # Create a new Series for the pie chart data
-    # Only add 'Other' if there are indeed other ports to sum
+    # Create labels with protocol names
+    protocol_labels = []
+    protocol_counts = []
+    for port, count in major_ports.items():
+        if port in port_protocol_mapping:
+            protocol_labels.append(f"{port_protocol_mapping[port]}:{port}")
+        else:
+            protocol_labels.append(f"Port {port}")
+        protocol_counts.append(count)
     if other_ports_count > 0:
-        pie_chart_data = pd.concat([major_ports, pd.Series({'Other': other_ports_count})])
-    else:
-        pie_chart_data = major_ports
+        protocol_labels.append("Other Ports")
+        protocol_counts.append(other_ports_count)
 
-    # Create the pie chart
-    plt.figure(figsize=(10, 10))
-    plt.pie(pie_chart_data, labels=pie_chart_data.index, autopct='%1.1f%%', startangle=90,
-            pctdistance=0.85, labeldistance=1.05)  # autopct to show percentages, startangle for 90 degrees
-    plt.title('Network Traffic by Protocol')
-    plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-    
-    # Save the chart instead of showing it
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.style.use('default')
+    fig, ax = plt.subplots(figsize=(12, 9), facecolor='white')
+    ax.set_facecolor('white')
+
+    # Use a rainbow colormap for the pie chart
+    cmap = plt.cm.rainbow
+    colors = [cmap(i / len(protocol_labels)) for i in range(len(protocol_labels))]
+
+    wedges, texts, autotexts = plt.pie(
+        protocol_counts,
+        labels=protocol_labels,
+        autopct=lambda pct: f'{pct:.1f}%' if pct > 3 else '',
+        startangle=90,
+        colors=colors,
+        wedgeprops={'linewidth': 2, 'edgecolor': 'white'},
+        pctdistance=0.7,
+        labeldistance=1.15
+    )
+
+    for text in texts:
+        text.set_fontsize(13)
+        text.set_fontweight('bold')
+        text.set_family('Arial')
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontweight('bold')
+        autotext.set_fontsize(11)
+        autotext.set_family('Arial')
+
+    plt.title('Network Traffic by Protocol', 
+              fontsize=16, fontweight='bold', pad=25, 
+              color='#2C3E50', family='Arial')
+    ax.axis('equal')
+    plt.tight_layout()
+    plt.subplots_adjust(left=0.1, right=0.9, bottom=0.1, top=0.9)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight', 
+                facecolor='white', edgecolor='none', format='png')
     plt.close()
+    print(f"📊 Network traffic chart with protocols saved to {output_path}")
+
+def create_data_distribution_chart(all_data: dict, output_path: str):
+    """
+    Create a pie chart showing the distribution of data across different categories.
+    
+    Args:
+        all_data: Dictionary containing dataframes from all Excel files
+        output_path: Path where the chart image will be saved
+    """
+    # Initialize counters
+    category_counts = {}
+    
+    # Map file names to display categories
+    file_category_mapping = {
+        'IP': 'IP Addresses',
+        'Domain': 'Subdomains', 
+        'Email': 'Email Addresses',
+        'Hash': 'Hashes',
+    }
+    
+    # Count rows in each category
+    for sheet_name, df in all_data.items():
+        # Match the sheet name to our categories
+        category_found = False
+        for file_key, display_name in file_category_mapping.items():
+            if file_key.lower() in sheet_name.lower():
+                if display_name not in category_counts:
+                    category_counts[display_name] = 0
+                category_counts[display_name] += len(df)
+                category_found = True
+                print(f"📊 Found {len(df)} rows in {sheet_name} -> {display_name}")
+                break
+        
+        if not category_found:
+            print(f"⚠️ Unknown category for file: {sheet_name}")
+    
+    # Check if we have any data
+    if not category_counts:
+        print("⚠️ No data found for distribution chart")
+        return
+    
+    # Create figure with white background
+    plt.style.use('default')
+    fig, ax = plt.subplots(figsize=(12, 8), facecolor='white')
+    ax.set_facecolor('white')
+    
+    # Sort by count for better visualization
+    sorted_categories = dict(sorted(category_counts.items(), key=lambda x: x[1], reverse=True))
+    
+    # Professional color palette - corporate blues and complementary colors
+    colors = ['#48cae4', '#0077b6', '#03045e', '#caf0f8', '#6A994E', '#4A5D23']
+    
+    # Calculate percentages for labels
+    total_records = sum(sorted_categories.values())
+    percentages = [count/total_records * 100 for count in sorted_categories.values()]
+    
+    # Create pie chart with professional styling
+    wedges, texts, autotexts = plt.pie(
+        sorted_categories.values(),
+        labels=None,  # We'll create custom labels
+        autopct=lambda pct: f'{pct:.1f}%' if pct > 5 else '',  # Only show percentage if > 5%
+        startangle=90,
+        colors=colors[:len(sorted_categories)],
+        wedgeprops={'linewidth': 2, 'edgecolor': 'white'},
+        pctdistance=0.85
+    )
+    
+    # Style the percentage text
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontweight('bold')
+        autotext.set_fontsize(11)
+        autotext.set_family('Arial')
+    
+    # Add professional title
+    plt.title('Attack Indicators', 
+              fontsize=16, fontweight='bold', pad=25, 
+              color='#2C3E50', family='Arial')
+    
+    # Create custom legend with better formatting
+    legend_elements = []
+    for i, (category, count) in enumerate(sorted_categories.items()):
+        percentage = (count / total_records) * 100
+        legend_label = f'{category}\n{count:,} records ({percentage:.1f}%)'
+        legend_elements.append(plt.Rectangle((0,0),1,1, facecolor=colors[i], 
+                                           edgecolor='white', linewidth=1))
+    
+    # Position legend to the right with better styling
+    legend = plt.legend(legend_elements, 
+                       [f'{cat}\n{count:,} records ({(count/total_records)*100:.1f}%)' 
+                        for cat, count in sorted_categories.items()],
+                       loc='center left',
+                       bbox_to_anchor=(1.05, 0.5),
+                       fontsize=10,
+                       frameon=True,
+                       fancybox=True,
+                       shadow=True,
+                       framealpha=0.9,
+                       facecolor='#F8F9FA',
+                       edgecolor='#E9ECEF')
+    
+    # Style the legend
+    legend.get_frame().set_linewidth(1)
+    
+    
+    # Ensure equal aspect ratio for circular pie
+    ax.axis('equal')
+    
+    # Adjust layout to prevent clipping
+    plt.tight_layout()
+    plt.subplots_adjust(left=0.1, right=0.75, bottom=0.1, top=0.9)
+    
+    # Save with high quality
+    plt.savefig(output_path, dpi=300, bbox_inches='tight', 
+                facecolor='white', edgecolor='none', format='png')
+    plt.close()
+    
+    print(f"📊 Professional data distribution chart saved to {output_path}")
+    return sorted_categories
