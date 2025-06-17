@@ -1,6 +1,6 @@
 from report_generator import generate_docx_report, get_organization_info
-from visuals import create_trend_chart, create_network_traffic_chart, get_analysis_period, create_data_distribution_chart
-from config import OPENAI_API_KEY, LLM_MODEL
+from visuals import create_trend_chart, create_network_traffic_chart, get_analysis_period, create_data_distribution_chart, create_top_sources_pie_chart
+from config import OPENROUTER_API_KEY, LLM_MODEL, OPENROUTER_BASE_URL
 import openai
 import re
 import os
@@ -37,23 +37,52 @@ The honeypot deployment has captured significant attack activity during the moni
 3. Network Traffic by Protocol
 Analysis of network protocols reveals... [Write detailed paragraphs about most targeted protocols]
 
-4. Indicator of Attacks
+4. Top Sources
+The analysis of attack sources reveals... [Write detailed paragraphs about the geographical distribution and origin patterns of attacks]
+
+5. Proxy IPs
+[Give ONLY a table for the top 5 proxy IP addresses which has the isProxy attribute as True in the attacks. The table should ONLY have 1 column of the Proxy IP address.]
+
+6. Indicator of Attacks
 Just Type - "Indicators are given below".
 
-5. Top IP Addresses
-The most active attacking IP addresses demonstrate... [Give ONLY a table for the top 20 IP addresses with respect to threatLevel of attacks(from highest to lowest. Must include all levels). In the table also include a column named severity which shows the threat level and action of each value]
+7. Top IP Addresses
+The most active attacking IP addresses demonstrate... [Give ONLY a table for the top 20 IP addresses with respect to threatLevel of attacks(from highest to lowest. Must include all levels). The table should ONLY have 3 columns namely IP, Severity and Action. Under Severity, we show the threat level]
+[In the end just write this in italics - "[Note: For your reference, we have attached an XLSX file containing a comprehensive list of IP
+addresses. Kindly note that this information has already been shared with the XDR team.]]
 
-6. Credential Patterns
-Attack credential patterns reveal... [Identify username/password patterns, common combinations, brute force attempts. Create a table for top 6 most common usernames that have been attacked along with the protocol service they have been attacked on and then some info and then create a table for top 6 passwords that have been attacked along with the protocol service they have been attacked on and then some info]
+8. Credential Patterns
+Attack credential patterns reveal significant insights into attacker methodologies and common attack vectors.
 
-7. Subdomains
-Subdomain enumeration and targeting shows... [Give ONLY a table for the top 20 subdomains that are different from each other]
+**Username Analysis:**
+Based on the honeypot data, the following table shows the most frequently targeted usernames:
 
-8. Email Addresses
-Email-related attack vectors include... [Give ONLY a table for the 20 email addresses that are different from each other]
+| Username | Service |
+|----------|---------|
+[Create a table with the top 6 most commonly attacked usernames and their corresponding services]
 
-9. Hashes
+The username targeting patterns indicate [write 1-2 sentences analyzing the username attack patterns].
+
+**Password Analysis:**
+The following table shows the most frequently attempted passwords:
+
+| Password | Service |
+|----------|---------|
+[Create a table with the top 6 most commonly attempted passwords and their corresponding services]
+
+The password attack patterns reveal [write 1-2 sentences analyzing the password attack patterns and their implications].
+
+9. Subdomains
+Subdomain enumeration and targeting shows... [Give ONLY a table for 10 subdomains that are uniquely different from each other]
+[In the end just write this in italics - "[Note: For your reference, we have attached an XLSX file containing a comprehensive list of subdomains. Kindly note that this information has already been shared with the XDR team.]]
+
+10. Email Addresses
+Email-related attack vectors include... [Give ONLY a table for 20 email addresses that are different from each other]
+[In the end just write this in italics - "[Note: For your reference, we have attached an XLSX file containing a comprehensive list of email addresses. Kindly note that this information has already been shared with the XDR team.]]
+
+11. Hashes
 Malware hash analysis indicates... [Give ONLY a table for the top 5 hashes and the malware family they belong to]
+[In the end just write this in italics - "[Note: For your reference, we have attached an XLSX file containing a comprehensive list of hashes. Kindly note that this information has already been shared with the XDR team.]]
 
 IMPORTANT: Write substantial content under each numbered section. Do not just list the headers. Analyze the actual data provided above.
 """
@@ -61,15 +90,18 @@ IMPORTANT: Write substantial content under each numbered section. Do not just li
 
 
 def call_llm(prompt: str):
-    if not OPENAI_API_KEY:
-        print("❌ OpenAI API key not configured")
+    if not OPENROUTER_API_KEY:
+        print("❌ OpenRouter API key not configured")
         return "[Error: API key not configured]"
     
-    # Set the API key
-    openai.api_key = OPENAI_API_KEY
+    # Configure OpenAI client for OpenRouter
+    client = openai.OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_BASE_URL
+    )
     
     try:
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": "You are a cybersecurity analyst writing structured reports."},
@@ -80,7 +112,7 @@ def call_llm(prompt: str):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"❌ OpenAI API request failed: {e}")
+        print(f"❌ OpenRouter API request failed: {e}")
         return "[Error: Failed to generate report.]"
 
 
@@ -95,16 +127,33 @@ def parse_markdown_table(table_text):
     if not header_line.startswith('|') or not header_line.endswith('|'):
         return None
     
-    headers = [h.strip() for h in header_line.split('|')[1:-1]]
+    # Split and clean headers - handle both single and multi-column tables
+    header_parts = header_line.split('|')[1:-1]  # Remove empty first/last elements
+    headers = [h.strip() for h in header_parts if h.strip()]  # Remove empty headers
+    
+    if not headers:  # Must have at least one header
+        return None
     
     # Skip separator line (line 1)
     data_rows = []
     for line in lines[2:]:
         if line.startswith('|') and line.endswith('|'):
-            row_data = [cell.strip() for cell in line.split('|')[1:-1]]
-            if len(row_data) == len(headers):
-                row_dict = dict(zip(headers, row_data))
-                data_rows.append(row_dict)
+            # Split and clean row data
+            row_parts = line.split('|')[1:-1]  # Remove empty first/last elements
+            row_data = [cell.strip() for cell in row_parts]
+            
+            # For single column tables, ensure we have the right number of cells
+            # Pad with empty strings if needed, or truncate if too many
+            if len(row_data) != len(headers):
+                if len(row_data) < len(headers):
+                    # Pad with empty strings
+                    row_data.extend([''] * (len(headers) - len(row_data)))
+                else:
+                    # Truncate to match headers
+                    row_data = row_data[:len(headers)]
+            
+            row_dict = dict(zip(headers, row_data))
+            data_rows.append(row_dict)
     
     return data_rows if data_rows else None
 
@@ -121,7 +170,10 @@ def extract_tables_from_text(text):
         stripped_line = line.strip()
         
         # Check if this line looks like a table row
-        if stripped_line.startswith('|') and stripped_line.endswith('|') and '|' in stripped_line[1:-1]:
+        # For single column: |Header| or |Data|
+        # For multi column: |Col1|Col2| or |Data1|Data2|
+        if (stripped_line.startswith('|') and stripped_line.endswith('|') and 
+            len(stripped_line) > 2):  # Must have at least |x| format
             if not in_table:
                 in_table = True
                 current_table_lines = []
@@ -162,7 +214,9 @@ def parse_report_sections(report_text):
     section_names = [
         "Attack Indicators",
         "Honeypot Attack Trends",
-        "Network Traffic by Protocol", 
+        "Network Traffic by Protocol",
+        "Top Sources",
+        "Proxy IPs", 
         "Indicator of Attacks",
         "Top IP Addresses",
         "Credential Patterns",
@@ -200,6 +254,8 @@ def parse_report_sections(report_text):
                 f"7. {section_name}",
                 f"8. {section_name}",
                 f"9. {section_name}",
+                f"10. {section_name}",
+                f"11. {section_name}",
                 f"1. **{section_name}**",
                 f"2. **{section_name}**",
                 f"3. **{section_name}**",
@@ -209,6 +265,8 @@ def parse_report_sections(report_text):
                 f"7. **{section_name}**",
                 f"8. **{section_name}**",
                 f"9. **{section_name}**",
+                f"10. **{section_name}**",
+                f"11. **{section_name}**",
                 section_name
             ]
             
@@ -282,6 +340,10 @@ def main():
     # Create data distribution chart first
     distribution_chart_path = "output/data_distribution_chart.png"
     create_data_distribution_chart(all_data, distribution_chart_path)
+
+    # Create top sources pie chart
+    top_sources_pie_chart_path = "output/top_sources_pie_chart.png"
+    create_top_sources_pie_chart(all_data, top_sources_pie_chart_path)
     
     for sheet_name, df in all_data.items():
         # Check if the dataframe has the required columns for trend chart
@@ -340,6 +402,9 @@ def main():
         elif "Network Traffic by Protocol" in section_name:
             section_images[section_name] = network_chart_path
             print(f"Assigned network chart to section: {section_name}")
+        elif "Top Sources" in section_name:
+            section_images[section_name] = top_sources_pie_chart_path
+            print(f"Assigned top sources pie chart to section: {section_name}")
         elif "Attack Trends" in section_name:
             section_images[section_name] = trend_chart_path
             print(f"Assigned trend chart to section: {section_name}")
@@ -351,6 +416,7 @@ def main():
     print(f"Data distribution chart path: {distribution_chart_path}")
     print(f"Trend chart path: {trend_chart_path}")
     print(f"Network chart path: {network_chart_path}")
+    print(f"Top sources pie chart path: {top_sources_pie_chart_path}")
 
     # Get organization info from logos folder
     print("🏢 Detecting organization info from logos folder...")

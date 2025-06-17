@@ -43,11 +43,12 @@ cyber-report-generator/
    ```
    pip install -r requirements.txt
    ```
-3. **Add your OpenAI API key:**
+3. **Add your OpenRouter API key:**
    - Create a file named `.env` in the project root directory.
-   - Add your OpenAI API key in this format:
+   - Get your API key from [OpenRouter](https://openrouter.ai/keys)
+   - Add your OpenRouter API key in this format:
      ```
-     OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+     OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
      ```
    - **Do not share or commit your .env file.**
 

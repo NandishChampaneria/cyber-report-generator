@@ -85,10 +85,32 @@ def add_table(doc, data, column_names):
     table = doc.add_table(rows=1, cols=len(column_names))
     table.style = 'Table Grid'
 
-    # Add headers
+    # Add headers with dark blue background
     hdr_cells = table.rows[0].cells
     for i, col_name in enumerate(column_names):
-        hdr_cells[i].text = col_name
+        cell = hdr_cells[i]
+        cell.text = col_name
+        
+        # Set dark blue background color for header
+        from docx.oxml.ns import nsdecls
+        from docx.oxml import parse_xml
+        
+        # Dark blue color (RGB: 31, 73, 125)
+        shading_elm = parse_xml(r'<w:shd {} w:fill="1F497D"/>'.format(nsdecls('w')))
+        cell._tc.get_or_add_tcPr().append(shading_elm)
+        
+        # Set white text color for header
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.font.color.rgb = RGBColor(255, 255, 255)  # White text
+                run.font.bold = True
+            # If no runs exist yet, create one
+            if not paragraph.runs:
+                run = paragraph.add_run(col_name)
+                run.font.color.rgb = RGBColor(255, 255, 255)  # White text
+                run.font.bold = True
+                # Clear the cell text since we're adding it via run
+                cell.text = ""
 
     # Add rows
     for row in data:
@@ -110,6 +132,8 @@ def add_table_of_contents(doc, content=None, images=None, tables=None):
         "Attack Indicators",
         "Honeypot Attack Trends", 
         "Network Traffic by Protocol",
+        "Top Sources",
+        "Proxy IPs",
         "Indicator of Attacks",
         "Top IP Addresses",
         "Credential Patterns",
@@ -548,6 +572,8 @@ def generate_docx_report(content: dict, images: dict, tables: dict, output_path:
         "Attack Indicators",
         "Honeypot Attack Trends",
         "Network Traffic by Protocol",
+        "Top Sources",
+        "Proxy IPs",
         "Indicator of Attacks",
         "Top IP Addresses",
         "Credential Patterns",
@@ -561,22 +587,88 @@ def generate_docx_report(content: dict, images: dict, tables: dict, output_path:
 
         add_heading(doc, section_name, level=1)
 
-        if chart:
-            add_image(doc, chart)
+        if section_name == "Credential Patterns":
+            # Special handling for Credential Patterns - split into username and password parts
+            raw_text = text or ""
+            table_data = table or []
+            
+            # Split the text by looking for "Username Analysis" and "Password Analysis" markers
+            username_text = ""
+            password_text = ""
+            username_table = None
+            password_table = None
+            
+            if raw_text:
+                lines = raw_text.split('\n')
+                current_part = None
+                username_lines = []
+                password_lines = []
+                
+                for line in lines:
+                    if "Username Analysis" in line or "**Username Analysis:**" in line:
+                        current_part = "username"
+                        continue
+                    elif "Password Analysis" in line or "**Password Analysis:**" in line:
+                        current_part = "password"
+                        continue
+                    
+                    if current_part == "username":
+                        username_lines.append(line)
+                    elif current_part == "password":
+                        password_lines.append(line)
+                
+                username_text = '\n'.join(username_lines).strip()
+                password_text = '\n'.join(password_lines).strip()
+            
+            # Split tables if we have multiple tables
+            if isinstance(table_data, list) and len(table_data) >= 2:
+                username_table = table_data[0]
+                password_table = table_data[1]
+            elif isinstance(table_data, list) and len(table_data) == 1:
+                # If only one table, assume it's username table
+                username_table = table_data[0]
+            
+            # Add Username Analysis section
+            username_heading = doc.add_heading("Username Analysis", level=2)
+            
+            if username_table and len(username_table) > 0:
+                column_names = list(username_table[0].keys())
+                add_table(doc, username_table, column_names)
+            
+            if username_text:
+                add_paragraph(doc, username_text)
+            
+            # Add some spacing
+            doc.add_paragraph()
+            
+            # Add Password Analysis section
+            password_heading = doc.add_heading("Password Analysis", level=2)
+            
+            if password_table and len(password_table) > 0:
+                column_names = list(password_table[0].keys())
+                add_table(doc, password_table, column_names)
+            
+            if password_text:
+                add_paragraph(doc, password_text)
+        
+        else:
+            # Regular section handling
+            if chart:
+                add_image(doc, chart)
 
-        if table:
-            # Handle both single table and list of tables
-            if isinstance(table, list):
-                for single_table in table:
-                    if single_table and len(single_table) > 0:
-                        column_names = list(single_table[0].keys())
-                        add_table(doc, single_table, column_names)
-            elif len(table) > 0:
-                column_names = list(table[0].keys())
-                add_table(doc, table, column_names)
+            if table:
+                # Handle both single table and list of tables
+                if isinstance(table, list):
+                    for single_table in table:
+                        if single_table and len(single_table) > 0:
+                            column_names = list(single_table[0].keys())
+                            add_table(doc, single_table, column_names)
+                elif len(table) > 0:
+                    column_names = list(table[0].keys())
+                    add_table(doc, table, column_names)
 
-        if text:
-            add_paragraph(doc, text)
+            if text:
+                add_paragraph(doc, text)
 
     # Add the About Sequretek page at the end
     add_about_sequretek_page(doc)

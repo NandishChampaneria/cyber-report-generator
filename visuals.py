@@ -383,3 +383,39 @@ def create_data_distribution_chart(all_data: dict, output_path: str):
     
     print(f"📊 Professional data distribution chart saved to {output_path}")
     return sorted_categories
+
+def create_top_sources_pie_chart(all_data: dict, output_path: str):
+    """
+    Create a pie chart showing the distribution of attack sources by country (as percent).
+    Args:
+        all_data: dict of DataFrames from all sheets
+        output_path: Path where the chart image will be saved
+    """
+    # Aggregate country counts from all sheets
+    country_counts = {}
+    for df in all_data.values():
+        if 'countryName' in df.columns:
+            for country in df['countryName'].dropna():
+                country_counts[country] = country_counts.get(country, 0) + 1
+    if not country_counts:
+        print("⚠️ No country data found for top sources pie chart")
+        return None
+    # Sort and take top N (e.g., 10)
+    sorted_countries = sorted(country_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    labels, sizes = zip(*sorted_countries)
+    
+    # Create a donut chart (pie chart with hole in center)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                      startangle=140, wedgeprops=dict(width=0.5))
+    
+    # Style the text
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontweight('bold')
+    
+    ax.set_title('Top Sources', fontsize=14, fontweight='bold', pad=20)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    return output_path
